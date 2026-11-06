@@ -3,8 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Pointillism Flower - Generative Botanical Art.
- * Auto-resizing viewport canvas with minimal controls:
- * GitHub profile link, Slow Down, Pause/Resume, Speed Up.
+ * Pure black background with auto-resizing viewport canvas and minimal controls:
+ * - GitHub profile button (https://github.com/virus-c-x)
+ * - Speed Up button
+ * - Slow Down button
+ * - Pause/Resume button
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -12,16 +15,14 @@ import { PlantSimulation, T_END } from './flower/simulation';
 
 const GITHUB_PROFILE_URL = 'https://github.com/virus-c-x';
 
-function getSimulationSize(): number {
+function getIdealResolution(): number {
   if (typeof window === 'undefined') return 640;
-  // Fit viewport maintaining 1:1 aspect ratio, matching WIN_FRAC = 0.92
-  const minDim = Math.min(window.innerWidth, window.innerHeight);
-  const size = Math.floor(minDim * 0.92);
-  return Math.max(360, Math.min(size, 1200));
+  const minDim = Math.min(window.innerWidth || 640, window.innerHeight || 640);
+  const target = Math.floor(minDim * 0.92);
+  return Math.max(320, Math.min(target, 1000));
 }
 
 export default function App() {
-  const [size, setSize] = useState<number>(getSimulationSize);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [speed, setSpeed] = useState<number>(1.0);
 
@@ -32,61 +33,59 @@ export default function App() {
   const clockRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(performance.now());
   const animFrameRef = useRef<number | null>(null);
-  const sizeRef = useRef<number>(size);
 
   isPlayingRef.current = isPlaying;
   speedRef.current = speed;
-  sizeRef.current = size;
 
-  // Initialize or re-create plant simulation
-  const setupSimulation = useCallback((simSize: number) => {
-    plantRef.current = new PlantSimulation(simSize, simSize, 5, 'original');
+  // Initialize or re-create simulation
+  const initSimulation = useCallback((resolution: number) => {
+    plantRef.current = new PlantSimulation(resolution, resolution, 5, 'original');
     const plant = plantRef.current;
     const canvas = canvasRef.current;
     if (plant && canvas) {
-      canvas.width = simSize;
-      canvas.height = simSize;
+      canvas.width = plant.W;
+      canvas.height = plant.H;
       const pixels = plant.renderToBuffer(clockRef.current);
       const ctx = canvas.getContext('2d');
       if (ctx) {
         const imgData = new ImageData(
           new Uint8ClampedArray(pixels.buffer as ArrayBuffer),
-          simSize,
-          simSize
+          plant.W,
+          plant.H
         );
         ctx.putImageData(imgData, 0, 0);
       }
     }
   }, []);
 
-  // Window resize observer to adjust simulation size to fill viewport maintaining aspect ratio
+  // Initialize once on mount
   useEffect(() => {
-    let resizeTimer: number;
+    const initialRes = getIdealResolution();
+    initSimulation(initialRes);
+  }, [initSimulation]);
 
+  // Handle window resize dynamically to adapt internal resolution
+  useEffect(() => {
+    let timer: number;
     const handleResize = () => {
-      clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(() => {
-        const newSize = getSimulationSize();
-        if (Math.abs(newSize - sizeRef.current) > 16) {
-          setSize(newSize);
-          setupSimulation(newSize);
+      clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const newRes = getIdealResolution();
+        const currentPlant = plantRef.current;
+        if (!currentPlant || Math.abs(newRes - currentPlant.W) > 40) {
+          initSimulation(newRes);
         }
-      }, 100);
+      }, 150);
     };
 
     window.addEventListener('resize', handleResize);
     return () => {
       window.removeEventListener('resize', handleResize);
-      clearTimeout(resizeTimer);
+      clearTimeout(timer);
     };
-  }, [setupSimulation]);
+  }, [initSimulation]);
 
-  // Initial simulation build
-  useEffect(() => {
-    setupSimulation(size);
-  }, [setupSimulation, size]);
-
-  // Animation render loop
+  // Main animation render loop
   useEffect(() => {
     let active = true;
 
@@ -105,14 +104,18 @@ export default function App() {
       const plant = plantRef.current;
       const canvas = canvasRef.current;
       if (plant && canvas) {
-        const currentSize = sizeRef.current;
+        if (canvas.width !== plant.W || canvas.height !== plant.H) {
+          canvas.width = plant.W;
+          canvas.height = plant.H;
+        }
+
         const pixels = plant.renderToBuffer(clockRef.current);
         const ctx = canvas.getContext('2d');
         if (ctx) {
           const imgData = new ImageData(
             new Uint8ClampedArray(pixels.buffer as ArrayBuffer),
-            currentSize,
-            currentSize
+            plant.W,
+            plant.H
           );
           ctx.putImageData(imgData, 0, 0);
         }
@@ -132,7 +135,7 @@ export default function App() {
     };
   }, []);
 
-  // Controls Handlers
+  // Control handlers
   const togglePlay = useCallback(() => {
     setIsPlaying((prev) => !prev);
   }, []);
@@ -164,7 +167,7 @@ export default function App() {
     }, 'image/png');
   }, []);
 
-  // Keyboard Shortcuts (Space, R, S)
+  // Original keyboard shortcuts (<Space> to pause/resume, <R> to restart, <S> to snapshot)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
@@ -184,19 +187,22 @@ export default function App() {
   }, [togglePlay, handleRestart, handleSaveFrame]);
 
   return (
-    <div className="relative w-screen h-screen bg-black flex items-center justify-center overflow-hidden m-0 p-0 select-none">
-      {/* Simulation Canvas fitted to browser viewport */}
+    <main className="relative w-screen h-screen bg-black flex items-center justify-center overflow-hidden m-0 p-0 select-none">
+      {/* Simulation Canvas: fills viewport while preserving aspect ratio */}
       <canvas
         ref={canvasRef}
-        width={size}
-        height={size}
-        className="block bg-black aspect-square max-w-full max-h-full object-contain cursor-pointer"
+        style={{
+          width: 'min(92vw, 92vh)',
+          height: 'min(92vw, 92vh)',
+          aspectRatio: '1 / 1',
+        }}
+        className="block bg-black aspect-square object-contain cursor-pointer"
         onClick={togglePlay}
       />
 
       {/* Minimal Floating Controls */}
       <div className="absolute bottom-5 inset-x-0 flex items-center justify-center pointer-events-none z-20">
-        <div className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-stone-950/80 backdrop-blur-md border border-stone-800/80 text-stone-300 shadow-2xl transition-opacity hover:opacity-100 opacity-75">
+        <div className="pointer-events-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-stone-950/85 backdrop-blur-md border border-stone-800/80 text-stone-300 shadow-2xl transition-opacity hover:opacity-100 opacity-75">
           
           {/* GitHub Profile Button */}
           <a
@@ -259,13 +265,13 @@ export default function App() {
             </svg>
           </button>
 
-          {/* Speed Indicator */}
+          {/* Speed Multiplier Text */}
           <span className="font-mono text-[10px] text-stone-500 min-w-8 text-center">
             {speed}x
           </span>
 
         </div>
       </div>
-    </div>
+    </main>
   );
 }
