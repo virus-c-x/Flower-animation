@@ -52,30 +52,42 @@ export default function App() {
 
   // Paint the current simulation state to the canvas
   const renderFrame = useCallback(() => {
-    const plant = plantRef.current;
-    const canvas = canvasRef.current;
-    if (!plant || !canvas) return;
+    try {
+      const plant = plantRef.current;
+      const canvas = canvasRef.current;
+      if (!plant || !canvas) return;
 
-    // Ensure canvas dimensions strictly match simulation buffer
-    if (canvas.width !== plant.W) canvas.width = plant.W;
-    if (canvas.height !== plant.H) canvas.height = plant.H;
+      // Ensure canvas dimensions strictly match simulation buffer
+      if (canvas.width !== plant.W) canvas.width = plant.W;
+      if (canvas.height !== plant.H) canvas.height = plant.H;
 
-    const ctx = canvas.getContext('2d', { alpha: false });
-    if (!ctx) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    // Create or reuse ImageData buffer matching current dimensions
-    let imgData = imageDataRef.current;
-    if (!imgData || imgData.width !== plant.W || imgData.height !== plant.H) {
-      imgData = ctx.createImageData(plant.W, plant.H);
-      imageDataRef.current = imgData;
+      // Create or reuse ImageData buffer matching current dimensions
+      let imgData = imageDataRef.current;
+      if (!imgData || imgData.width !== plant.W || imgData.height !== plant.H) {
+        try {
+          imgData = ctx.createImageData(plant.W, plant.H);
+        } catch {
+          imgData = new ImageData(plant.W, plant.H);
+        }
+        imageDataRef.current = imgData;
+      }
+
+      const pixels = plant.renderToBuffer(clockRef.current);
+      // Direct 32-bit pixel copy into the ImageData buffer (zero allocation, universal support)
+      const buf32 = new Uint32Array(
+        imgData.data.buffer,
+        imgData.data.byteOffset,
+        plant.W * plant.H
+      );
+      buf32.set(pixels);
+
+      ctx.putImageData(imgData, 0, 0);
+    } catch (err) {
+      console.error('Render frame error:', err);
     }
-
-    const pixels = plant.renderToBuffer(clockRef.current);
-    // Direct 32-bit pixel copy into the ImageData buffer (zero allocation, universal support)
-    const buf32 = new Uint32Array(imgData.data.buffer);
-    buf32.set(pixels);
-
-    ctx.putImageData(imgData, 0, 0);
   }, []);
 
   // Window resize observer: adapts simulation resolution to viewport while keeping aspect ratio
