@@ -1,0 +1,6 @@
+{
+  "name": "Pointillism Flower - Generative Botanical Art",
+  "description": "محاكاة فنية تفاعلية للزهرة التوليدية بأسلوب التنقيط (Pointillism Flower Life Cycle) بالكامل على المتصفح مع تصدير الصور، وفيديو، وملفات جاهزة للنشر على GitHub Pages.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
