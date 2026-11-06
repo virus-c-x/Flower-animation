@@ -3,26 +3,30 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Pointillism Flower - Generative Botanical Art.
- * Pure black background with auto-resizing viewport canvas and minimal controls:
- * - GitHub profile button (https://github.com/virus-c-x)
- * - Speed Up button
- * - Slow Down button
- * - Pause/Resume button
+ * Robust canvas initialization and rendering loop:
+ * - Immediate flower render on page load
+ * - Auto-resizing viewport canvas preserving aspect ratio
+ * - Minimal controls: GitHub (https://github.com/virus-c-x), Slow Down, Pause/Resume, Speed Up
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { PlantSimulation, T_END } from './flower/simulation';
 
 const GITHUB_PROFILE_URL = 'https://github.com/virus-c-x';
+// Initial time set to peak bloom (24.0s) so the flower is drawn immediately on page load
+const INITIAL_TIME = 24.0;
 
 function getIdealResolution(): number {
   if (typeof window === 'undefined') return 640;
-  const minDim = Math.min(window.innerWidth || 640, window.innerHeight || 640);
+  const w = window.innerWidth || 640;
+  const h = window.innerHeight || 640;
+  const minDim = Math.min(w, h);
   const target = Math.floor(minDim * 0.92);
-  return Math.max(320, Math.min(target, 1000));
+  return Math.max(360, Math.min(target, 1000));
 }
 
 export default function App() {
+  const [size, setSize] = useState<number>(getIdealResolution);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [speed, setSpeed] = useState<number>(1.0);
 
@@ -30,52 +34,65 @@ export default function App() {
   const plantRef = useRef<PlantSimulation | null>(null);
   const isPlayingRef = useRef<boolean>(true);
   const speedRef = useRef<number>(1.0);
-  const clockRef = useRef<number>(0);
+  const clockRef = useRef<number>(INITIAL_TIME);
   const lastTimeRef = useRef<number>(performance.now());
   const animFrameRef = useRef<number | null>(null);
+  const sizeRef = useRef<number>(size);
 
   isPlayingRef.current = isPlaying;
   speedRef.current = speed;
+  sizeRef.current = size;
 
-  // Initialize or re-create simulation
-  const initSimulation = useCallback((resolution: number) => {
-    plantRef.current = new PlantSimulation(resolution, resolution, 5, 'original');
+  // Ensure simulation instance exists immediately
+  if (!plantRef.current) {
+    plantRef.current = new PlantSimulation(size, size, 5, 'original');
+  }
+
+  const imageDataRef = useRef<ImageData | null>(null);
+
+  // Paint the current simulation state to the canvas
+  const renderFrame = useCallback(() => {
     const plant = plantRef.current;
     const canvas = canvasRef.current;
-    if (plant && canvas) {
-      canvas.width = plant.W;
-      canvas.height = plant.H;
-      const pixels = plant.renderToBuffer(clockRef.current);
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        const imgData = new ImageData(
-          new Uint8ClampedArray(pixels.buffer as ArrayBuffer),
-          plant.W,
-          plant.H
-        );
-        ctx.putImageData(imgData, 0, 0);
-      }
+    if (!plant || !canvas) return;
+
+    // Ensure canvas dimensions strictly match simulation buffer
+    if (canvas.width !== plant.W) canvas.width = plant.W;
+    if (canvas.height !== plant.H) canvas.height = plant.H;
+
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) return;
+
+    // Create or reuse ImageData buffer matching current dimensions
+    let imgData = imageDataRef.current;
+    if (!imgData || imgData.width !== plant.W || imgData.height !== plant.H) {
+      imgData = ctx.createImageData(plant.W, plant.H);
+      imageDataRef.current = imgData;
     }
+
+    const pixels = plant.renderToBuffer(clockRef.current);
+    // Direct 32-bit pixel copy into the ImageData buffer (zero allocation, universal support)
+    const buf32 = new Uint32Array(imgData.data.buffer);
+    buf32.set(pixels);
+
+    ctx.putImageData(imgData, 0, 0);
   }, []);
 
-  // Initialize once on mount
-  useEffect(() => {
-    const initialRes = getIdealResolution();
-    initSimulation(initialRes);
-  }, [initSimulation]);
-
-  // Handle window resize dynamically to adapt internal resolution
+  // Window resize observer: adapts simulation resolution to viewport while keeping aspect ratio
   useEffect(() => {
     let timer: number;
+
     const handleResize = () => {
       clearTimeout(timer);
       timer = window.setTimeout(() => {
-        const newRes = getIdealResolution();
-        const currentPlant = plantRef.current;
-        if (!currentPlant || Math.abs(newRes - currentPlant.W) > 40) {
-          initSimulation(newRes);
+        const newSize = getIdealResolution();
+        if (Math.abs(newSize - sizeRef.current) > 24) {
+          setSize(newSize);
+          sizeRef.current = newSize;
+          plantRef.current = new PlantSimulation(newSize, newSize, 5, 'original');
+          renderFrame();
         }
-      }, 150);
+      }, 100);
     };
 
     window.addEventListener('resize', handleResize);
@@ -83,15 +100,20 @@ export default function App() {
       window.removeEventListener('resize', handleResize);
       clearTimeout(timer);
     };
-  }, [initSimulation]);
+  }, [renderFrame]);
 
-  // Main animation render loop
+  // Initial paint immediately on mount
+  useEffect(() => {
+    renderFrame();
+  }, [renderFrame]);
+
+  // Animation render loop
   useEffect(() => {
     let active = true;
 
     const tick = (now: number) => {
       if (!active) return;
-      const delta = (now - lastTimeRef.current) / 1000;
+      const delta = Math.min((now - lastTimeRef.current) / 1000, 0.1); // clamp delta to prevent jumping
       lastTimeRef.current = now;
 
       if (isPlayingRef.current) {
@@ -101,26 +123,7 @@ export default function App() {
         }
       }
 
-      const plant = plantRef.current;
-      const canvas = canvasRef.current;
-      if (plant && canvas) {
-        if (canvas.width !== plant.W || canvas.height !== plant.H) {
-          canvas.width = plant.W;
-          canvas.height = plant.H;
-        }
-
-        const pixels = plant.renderToBuffer(clockRef.current);
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          const imgData = new ImageData(
-            new Uint8ClampedArray(pixels.buffer as ArrayBuffer),
-            plant.W,
-            plant.H
-          );
-          ctx.putImageData(imgData, 0, 0);
-        }
-      }
-
+      renderFrame();
       animFrameRef.current = requestAnimationFrame(tick);
     };
 
@@ -133,9 +136,9 @@ export default function App() {
         cancelAnimationFrame(animFrameRef.current);
       }
     };
-  }, []);
+  }, [renderFrame]);
 
-  // Control handlers
+  // Controls Handlers
   const togglePlay = useCallback(() => {
     setIsPlaying((prev) => !prev);
   }, []);
@@ -150,7 +153,8 @@ export default function App() {
 
   const handleRestart = useCallback(() => {
     clockRef.current = 0;
-  }, []);
+    renderFrame();
+  }, [renderFrame]);
 
   const handleSaveFrame = useCallback(() => {
     if (!canvasRef.current) return;
@@ -167,7 +171,7 @@ export default function App() {
     }, 'image/png');
   }, []);
 
-  // Original keyboard shortcuts (<Space> to pause/resume, <R> to restart, <S> to snapshot)
+  // Keyboard Shortcuts (Space: Pause/Resume, R: Restart, S: Save)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
@@ -187,10 +191,12 @@ export default function App() {
   }, [togglePlay, handleRestart, handleSaveFrame]);
 
   return (
-    <main className="relative w-screen h-screen bg-black flex items-center justify-center overflow-hidden m-0 p-0 select-none">
-      {/* Simulation Canvas: fills viewport while preserving aspect ratio */}
+    <main className="fixed inset-0 w-full h-full bg-black flex items-center justify-center overflow-hidden m-0 p-0 select-none">
+      {/* Simulation Canvas: explicitly sized with width/height attributes and responsive CSS */}
       <canvas
         ref={canvasRef}
+        width={size}
+        height={size}
         style={{
           width: 'min(92vw, 92vh)',
           height: 'min(92vw, 92vh)',
@@ -265,7 +271,7 @@ export default function App() {
             </svg>
           </button>
 
-          {/* Speed Multiplier Text */}
+          {/* Speed Multiplier */}
           <span className="font-mono text-[10px] text-stone-500 min-w-8 text-center">
             {speed}x
           </span>
